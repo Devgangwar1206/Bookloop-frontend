@@ -1,0 +1,6 @@
+{
+  "name": "BookLoop",
+  "description": "Buy, sell, and exchange used and new books in a community-driven marketplace. Buy. Sell. Exchange. Read Again.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
