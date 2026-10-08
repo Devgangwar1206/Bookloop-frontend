@@ -167,69 +167,86 @@ export function SellerDashboardPage() {
               </Link>
             </div>
 
-            <div className="divide-y divide-slate-100">
-              {listings.map((item) => (
-                <div key={item.id} className="py-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={item.images?.[0] || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=100&auto=format&fit=crop&q=80'}
-                      alt={item.title}
-                      className="w-12 h-16 object-cover rounded-lg border border-slate-200 shrink-0"
-                    />
-                    <div className="min-w-0">
-                      <Link to={`/books/${item.id}`} className="font-serif font-semibold text-slate-900 text-sm hover:text-blue-600 truncate block">
-                        {item.title}
-                      </Link>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        Price: <strong className="text-slate-800">₹{item.price}</strong> · Views: {item.views || 45} · Likes: {item.likes || 6}
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
-                          item.status === 'Active' ? 'text-emerald-700 bg-emerald-50' : item.status === 'Paused' ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-100'
-                        }`}>
-                          {item.status}
-                        </span>
-                        <span className="text-[11px] text-slate-400">
-                          {item.dateListed || 'Active now'}
-                        </span>
+            {listings.length === 0 ? (
+              <div className="py-12 text-center">
+                <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-sm font-semibold text-slate-800">No active listings yet</h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                  List your first book to start receiving buyer inquiries and price offers.
+                </p>
+                <Link
+                  to="/sell"
+                  className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>List a Book</span>
+                </Link>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {listings.map((item) => (
+                  <div key={item.id} className="py-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={item.images?.[0] || 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=100&auto=format&fit=crop&q=80'}
+                        alt={item.title}
+                        className="w-12 h-16 object-cover rounded-lg border border-slate-200 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <Link to={`/books/${item.id}`} className="font-serif font-semibold text-slate-900 text-sm hover:text-blue-600 truncate block">
+                          {item.title}
+                        </Link>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          Price: <strong className="text-slate-800">₹{item.price}</strong> · Views: {item.views || 0} · Likes: {item.likes || 0}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`px-2 py-0.5 text-[10px] font-bold rounded ${
+                            item.status === 'Active' ? 'text-emerald-700 bg-emerald-50' : item.status === 'Paused' ? 'text-amber-700 bg-amber-50' : 'text-slate-600 bg-slate-100'
+                          }`}>
+                            {item.status}
+                          </span>
+                          <span className="text-[11px] text-slate-400">
+                            {item.dateListed || 'Active now'}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
-                    {item.status !== 'Sold' && (
+                    {/* Actions */}
+                    <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                      {item.status !== 'Sold' && (
+                        <button
+                          type="button"
+                          onClick={() => handleMarkSold(item.id)}
+                          className="px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 rounded-lg border border-emerald-200 transition-colors cursor-pointer"
+                          title="Mark as sold"
+                        >
+                          Mark Sold
+                        </button>
+                      )}
+
                       <button
                         type="button"
-                        onClick={() => handleMarkSold(item.id)}
-                        className="px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 rounded-lg border border-emerald-200 transition-colors cursor-pointer"
-                        title="Mark as sold"
+                        onClick={() => handleToggleStatus(item.id, item.status)}
+                        className="p-1.5 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 cursor-pointer"
+                        title={item.status === 'Active' ? 'Pause listing' : 'Resume listing'}
                       >
-                        Mark Sold
+                        {item.status === 'Active' ? <PauseCircle className="w-4 h-4" /> : <PlayCircle className="w-4 h-4 text-emerald-600" />}
                       </button>
-                    )}
 
-                    <button
-                      type="button"
-                      onClick={() => handleToggleStatus(item.id, item.status)}
-                      className="p-1.5 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100 cursor-pointer"
-                      title={item.status === 'Active' ? 'Pause listing' : 'Resume listing'}
-                    >
-                      {item.status === 'Active' ? <PauseCircle className="w-4 h-4" /> : <PlayCircle className="w-4 h-4 text-emerald-600" />}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(item.id)}
-                      className="p-1.5 text-rose-500 hover:text-rose-700 rounded-lg hover:bg-rose-50 cursor-pointer"
-                      title="Delete listing"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(item.id)}
+                        className="p-1.5 text-rose-500 hover:text-rose-700 rounded-lg hover:bg-rose-50 cursor-pointer"
+                        title="Delete listing"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Right: Recent Activity Feed */}

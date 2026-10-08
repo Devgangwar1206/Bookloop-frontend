@@ -6,6 +6,31 @@ import { exchangeApi } from './exchangeApi';
 import { chatApi } from './chatApi';
 
 const PRO_INVENTORY_STORAGE_KEY = 'bookloop_pro_inventory';
+const STOCK_OVERRIDES_KEY = 'bookloop_stock_overrides';
+
+function getStockOverrides() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = localStorage.getItem(STOCK_OVERRIDES_KEY);
+      if (saved) return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Failed to load stock overrides', e);
+  }
+  return {};
+}
+
+function saveStockOverride(id, stock) {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const overrides = getStockOverrides();
+      overrides[String(id)] = Math.max(0, Number(stock));
+      localStorage.setItem(STOCK_OVERRIDES_KEY, JSON.stringify(overrides));
+    }
+  } catch (e) {
+    console.error('Failed to save stock override', e);
+  }
+}
 
 function loadStoredInventory() {
   try {
@@ -118,9 +143,9 @@ export const sellerApi = {
     try {
       const [myBooksRes, offersRes, exchangesRes, unreadChatsRes] = await Promise.allSettled([
         bookApi.getMyBooks(),
-        offerApi.getReceivedOffers(),
-        exchangeApi.getExchangeRequests(),
-        chatApi.getUnreadCount()
+        typeof offerApi.getOffersReceived === 'function' ? offerApi.getOffersReceived() : Promise.resolve([]),
+        typeof exchangeApi.getExchangeRequests === 'function' ? exchangeApi.getExchangeRequests() : Promise.resolve([]),
+        typeof chatApi?.getUnreadCount === 'function' ? chatApi.getUnreadCount() : Promise.resolve(0)
       ]);
 
       const booksList = myBooksRes.status === 'fulfilled' && Array.isArray(myBooksRes.value) ? myBooksRes.value : [];
@@ -138,9 +163,11 @@ export const sellerApi = {
         activeListings,
         views: totalViews,
         messages: messagesCount,
-        offersReceived: pendingOffers,
+        offersReceived: offersList.length,
+        pendingOffers,
         soldBooks,
-        exchangeRequests: pendingExchanges
+        exchangeRequests: exchangesList.length,
+        pendingExchanges
       };
     } catch (e) {
       console.warn('Failed to calculate seller metrics', e);
@@ -149,8 +176,10 @@ export const sellerApi = {
         views: 0,
         messages: 0,
         offersReceived: 0,
+        pendingOffers: 0,
         soldBooks: 0,
-        exchangeRequests: 0
+        exchangeRequests: 0,
+        pendingExchanges: 0
       };
     }
   },
@@ -178,10 +207,13 @@ export const sellerApi = {
       const realBooks = Array.isArray(myBooks) ? myBooks : [];
 
       // 2. Map real books to inventory structure
+      const stockOverrides = getStockOverrides();
       const mappedInventory = realBooks.map((b) => {
         const price = Number(b.price || b.originalPrice || 0);
         const mrp = Number(b.originalPrice || Math.round(price * 1.3));
         const discount = mrp > price ? `${Math.round(((mrp - price) / mrp) * 100)}%` : '15%';
+        const savedStock = stockOverrides[String(b.id)];
+        const stockCount = savedStock !== undefined ? Number(savedStock) : (b.status === 'Sold' ? 0 : 1);
 
         return {
           id: b.id,
@@ -194,7 +226,7 @@ export const sellerApi = {
           price: price,
           mrp: mrp,
           discount: discount,
-          stock: b.status === 'Sold' ? 0 : 1,
+          stock: stockCount,
           condition: b.condition || 'Used - Good',
           soldCount: b.status === 'Sold' ? 1 : 0,
           category: b.category || 'General',
@@ -208,6 +240,10 @@ export const sellerApi = {
       const combined = [...mappedInventory];
       stored.forEach((item) => {
         if (!combined.some((c) => String(c.id) === String(item.id))) {
+          const savedStock = stockOverrides[String(item.id)];
+          if (savedStock !== undefined) {
+            item.stock = Number(savedStock);
+          }
           combined.push(item);
         }
       });
@@ -291,15 +327,19 @@ export const sellerApi = {
   },
 
   async updateStock(id, newStock) {
+    const val = Math.max(0, Number(newStock));
+    saveStockOverride(id, val);
+
     const stored = loadStoredInventory();
-    const updated = stored.map(item => {
-      if (String(item.id) === String(id)) {
-        return { ...item, stock: Math.max(0, Number(newStock)) };
-      }
-      return item;
-    });
-    persistInventory(updated);
-    return updated.find(i => String(i.id) === String(id));
+    const existing = stored.find(item => String(item.id) === String(id));
+    if (existing) {
+      existing.stock = val;
+    } else {
+      stored.push({ id, stock: val });
+    }
+    persistInventory(stored);
+
+    return { id, stock: val };
   },
 
   async deleteInventoryItem(id) {
@@ -311,6 +351,14 @@ export const sellerApi = {
         console.warn('Could not delete listing from backend:', e);
       }
     }
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const overrides = getStockOverrides();
+        delete overrides[String(id)];
+        localStorage.setItem(STOCK_OVERRIDES_KEY, JSON.stringify(overrides));
+      }
+    } catch (e) {}
+
     const stored = loadStoredInventory();
     const updated = stored.filter(item => String(item.id) !== String(id));
     persistInventory(updated);

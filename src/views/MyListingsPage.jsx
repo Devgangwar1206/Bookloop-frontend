@@ -13,10 +13,12 @@ import {
   ExternalLink,
   BookOpen,
   Loader2,
+  Edit3,
 } from 'lucide-react';
 
 import { bookApi } from '../services/bookApi';
 import { useToast } from '../context/ToastContext';
+import { EditBookModal } from '../components/modals/EditBookModal';
 
 export function MyListingsPage() {
   const [listings, setListings] = useState([]);
@@ -24,6 +26,7 @@ export function MyListingsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
+  const [editingBook, setEditingBook] = useState(null);
 
   // Tracks which action is currently running
   const [loadingAction, setLoadingAction] = useState(null);
@@ -159,6 +162,24 @@ export function MyListingsPage() {
     } finally {
       setLoadingAction(null);
     }
+  };
+
+  // =====================================================
+  // EDIT LISTING
+  // =====================================================
+
+  const handleOpenEditModal = (book) => {
+    setEditingBook(book);
+  };
+
+  const handleBookUpdated = (updatedBook) => {
+    setListings((prev) =>
+      prev.map((item) =>
+        String(item.id) === String(updatedBook.id)
+          ? { ...item, ...updatedBook }
+          : item
+      )
+    );
   };
 
   // =====================================================
@@ -549,6 +570,18 @@ export function MyListingsPage() {
                       </span>
                     </Link>
 
+                    {/* EDIT / UPDATE BOOK */}
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditModal(item)}
+                      className="px-3 py-1.5 rounded-xl text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 flex items-center gap-1 transition-colors cursor-pointer"
+                      title="Update book details and photos"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+
                     {/* MARK SOLD */}
 
                     {item.status !== 'Sold' && (
@@ -704,6 +737,14 @@ export function MyListingsPage() {
           </div>
         )}
       </div>
+
+      {/* EDIT BOOK MODAL */}
+      <EditBookModal
+        isOpen={Boolean(editingBook)}
+        book={editingBook}
+        onClose={() => setEditingBook(null)}
+        onBookUpdated={handleBookUpdated}
+      />
     </div>
   );
 }

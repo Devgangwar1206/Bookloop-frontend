@@ -14,7 +14,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = location.state?.from?.pathname || '/dashboard';
+  const from = location.state?.from?.pathname || '/profile';
 
   const handleSubmit = async (e) => {
     e.preventDefault();

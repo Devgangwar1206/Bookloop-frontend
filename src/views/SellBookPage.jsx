@@ -12,13 +12,15 @@ import {
   ArrowLeftRight, 
   DollarSign, 
   Tag,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { CATEGORIES, CITIES } from '../data/mockData';
 import { bookApi } from '../services/bookApi';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useToast } from '../context/ToastContext';
 import { Modal } from '../components/common/Modal';
+import { processImageFile } from '../utils/imageUtils';
 
 
 const SAMPLE_BOOK_PHOTOS = [
@@ -59,9 +61,33 @@ export function SellBookPage() {
   const [showOptional, setShowOptional] = useState(false);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleDevicePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (images.length >= 5) {
+      addToast('Maximum 5 photos allowed', 'error');
+      return;
+    }
+
+    try {
+      setUploadingPhoto(true);
+      const base64Url = await processImageFile(file);
+      setImages((prev) => [...prev, base64Url]);
+      addToast('Photo uploaded from device!', 'success', 2000);
+    } catch (err) {
+      console.error('Image processing failed:', err);
+      addToast(err?.message || 'Failed to process image file', 'error');
+    } finally {
+      setUploadingPhoto(false);
+      e.target.value = '';
+    }
   };
 
   const handleAddSamplePhoto = (url) => {
@@ -199,19 +225,24 @@ export function SellBookPage() {
               {/* Upload trigger button */}
               {images.length < 5 && (
                 <label className="flex flex-col items-center justify-center aspect-square rounded-2xl border-2 border-dashed border-slate-300 hover:border-blue-600 bg-slate-50 hover:bg-blue-50/50 cursor-pointer transition-colors p-4 text-center">
-                  <Camera className="w-6 h-6 text-slate-400 mb-2" />
-                  <span className="text-xs font-semibold text-slate-700">Add Photo</span>
-                  <span className="text-[10px] text-slate-400 mt-0.5">JPG, PNG up to 10MB</span>
+                  {uploadingPhoto ? (
+                    <>
+                      <Loader2 className="w-6 h-6 text-blue-600 mb-2 animate-spin" />
+                      <span className="text-xs font-semibold text-slate-700">Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-6 h-6 text-slate-400 mb-2" />
+                      <span className="text-xs font-semibold text-slate-700">Add Photo</span>
+                      <span className="text-[10px] text-slate-400 mt-0.5">JPG, PNG up to 10MB</span>
+                    </>
+                  )}
                   <input
                     type="file"
                     accept="image/*"
+                    disabled={uploadingPhoto}
                     className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files?.[0]) {
-                        const url = URL.createObjectURL(e.target.files[0]);
-                        handleAddSamplePhoto(url);
-                      }
-                    }}
+                    onChange={handleDevicePhotoUpload}
                   />
                 </label>
               )}
