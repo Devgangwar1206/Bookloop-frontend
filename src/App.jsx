@@ -35,6 +35,8 @@ import SearchPage from './views/SearchPage';
 import NotFoundPage from './views/NotFoundPage';
 import { AiAssistantWidget } from './components/chat/AiAssistantWidget';
 import OAuthSuccessPage from './views/OAuthSuccessPage';
+import { BackendKeepAlive } from './components/common/BackendKeepAlive';
+
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -51,6 +53,7 @@ export function App() {
           <MarketplaceProvider>
             <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans antialiased selection:bg-blue-500/20 selection:text-blue-900 overflow-x-hidden w-full max-w-full">
               <ScrollToTop />
+              <BackendKeepAlive />
               <Navbar />
 
               <main className="flex-1 pb-16 md:pb-0 w-full max-w-full overflow-x-hidden">

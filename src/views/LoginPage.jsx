@@ -5,8 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 
 export function LoginPage() {
-  const [emailOrPhone, setEmailOrPhone] = useState('arjun.sharma@example.com');
-  const [password, setPassword] = useState('password123');
+  const [emailOrPhone, setEmailOrPhone] = useState();
+  const [password, setPassword] = useState();
   const [rememberMe, setRememberMe] = useState(true);
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
