@@ -2,7 +2,6 @@
 // BookLoop - Spring Boot REST + STOMP/SockJS
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { INITIAL_CHATS } from '../data/mockData';
 
 const RAW_API_URL =
   typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL
@@ -38,7 +37,7 @@ function getAuthToken() {
 }
 
 function getStoredUserId() {
-  if (typeof window === 'undefined') return 'u-me';
+  if (typeof window === 'undefined') return '';
   const storedId = localStorage.getItem('userId') || localStorage.getItem('id');
   if (storedId) return String(storedId);
 
@@ -51,7 +50,7 @@ function getStoredUserId() {
     }
   } catch (e) {}
 
-  return 'u-me';
+  return '';
 }
 
 function getStoredUser() {
@@ -72,22 +71,22 @@ function getAuthHeaders(includeJson = false) {
 }
 
 // ---------------------------------------------------------
-// LOCAL FALLBACK STORAGE
+// LOCAL STORAGE CACHE (REAL DATA ONLY - NO MOCK CONVERSATIONS)
 // ---------------------------------------------------------
 
 function loadStoredChats() {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const saved = localStorage.getItem(CHATS_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
     }
   } catch (error) {
     console.error('Failed to load chats from storage:', error);
   }
-  return INITIAL_CHATS.map((chat) => ({
-    ...chat,
-    messages: [...(chat.messages || [])],
-  }));
+  return [];
 }
 
 function persistChats(chats) {
@@ -101,36 +100,8 @@ function persistChats(chats) {
 }
 
 let chatsStore = loadStoredChats();
-let isBackendAlive = null;
 let stompClient = null;
 let globalStompClient = null;
-
-// ---------------------------------------------------------
-// CONNECTIVITY CHECK
-// ---------------------------------------------------------
-
-async function checkBackendConnectivity() {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-    const response = await fetch(`${API_BASE}/health`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (response.ok || response.status === 401 || response.status === 403) {
-      isBackendAlive = true;
-      return true;
-    }
-  } catch (error) {
-    // Offline or starting up
-  }
-  isBackendAlive = false;
-  return false;
-}
 
 // ---------------------------------------------------------
 // MAIN CHAT API MODULE
@@ -142,99 +113,138 @@ export const chatApi = {
   },
 
   async isBackendAvailable() {
-    return await checkBackendConnectivity();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`${API_BASE}/health`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return res.ok || res.status === 401 || res.status === 403;
+    } catch {
+      return false;
+    }
   },
 
+  /**
+   * Fetch all user conversations from real backend database.
+   * If user has 0 conversations, returns an empty array [] (never mock data).
+   */
   async getConversations(userId = null) {
     const currentId = userId || getStoredUserId();
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const params = new URLSearchParams();
-        if (currentId && currentId !== 'u-me') {
-          params.set('userId', currentId);
-        }
-
-        const response = await fetch(`${API_BASE}/conversations?${params.toString()}`, {
-          method: 'GET',
-          headers: getAuthHeaders(),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data) && data.length > 0) {
-            return data;
-          }
-        }
-      } catch (error) {
-        console.warn('getConversations failed:', error);
+    try {
+      const params = new URLSearchParams();
+      if (currentId && currentId !== 'u-me') {
+        params.set('userId', currentId);
       }
+
+      const response = await fetch(`${API_BASE}/conversations${params.toString() ? '?' + params.toString() : ''}`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          chatsStore = data;
+          persistChats(data);
+          return data;
+        }
+      }
+    } catch (error) {
+      console.warn('getConversations backend fetch failed:', error);
     }
+
     return [...chatsStore];
   },
 
+  /**
+   * Fetch a specific conversation with message history
+   */
   async getConversationById(chatId, userId = null) {
     const currentId = userId || getStoredUserId();
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const params = new URLSearchParams();
-        if (currentId && currentId !== 'u-me') {
-          params.set('userId', currentId);
-        }
-        const response = await fetch(
-          `${API_BASE}/conversations/${encodeURIComponent(chatId)}?${params.toString()}`,
-          {
-            method: 'GET',
-            headers: getAuthHeaders(),
-          }
-        );
-        if (response.ok) return await response.json();
-      } catch (error) {
-        console.warn('getConversationById failed:', error);
+    try {
+      const params = new URLSearchParams();
+      if (currentId && currentId !== 'u-me') {
+        params.set('userId', currentId);
       }
+      const response = await fetch(
+        `${API_BASE}/conversations/${encodeURIComponent(chatId)}${params.toString() ? '?' + params.toString() : ''}`,
+        {
+          method: 'GET',
+          headers: getAuthHeaders(),
+        }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data) {
+          updateOrAddLocalChat(data);
+          return data;
+        }
+      }
+    } catch (error) {
+      console.warn('getConversationById failed:', error);
     }
+
     const conv = chatsStore.find((c) => String(c.id) === String(chatId));
     return conv ? { ...conv } : null;
   },
 
+  /**
+   * Fetch messages history for a conversation
+   */
   async getMessages(chatId) {
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages`, {
-          method: 'GET',
-          headers: getAuthHeaders(),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data)) return data;
+    try {
+      const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data)) {
+          // Sync messages with local store
+          const conv = chatsStore.find((c) => String(c.id) === String(chatId));
+          if (conv) {
+            conv.messages = data;
+            persistChats(chatsStore);
+          }
+          return data;
         }
-      } catch (error) {
-        console.warn('getMessages failed:', error);
       }
+    } catch (error) {
+      console.warn('getMessages failed:', error);
     }
+
     const conv = chatsStore.find((c) => String(c.id) === String(chatId));
     return conv ? [...(conv.messages || [])] : [];
   },
 
+  /**
+   * Mark all messages in a conversation as read
+   */
   async markAsRead(chatId, userId = null) {
     const currentId = userId || getStoredUserId();
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const params = new URLSearchParams({ userId: currentId });
-        const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/read?${params.toString()}`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          return data.unreadCount || 0;
-        }
-      } catch (error) {
-        console.warn('markAsRead failed:', error);
+    try {
+      const params = new URLSearchParams();
+      if (currentId && currentId !== 'u-me') params.set('userId', currentId);
+
+      const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/read?${params.toString()}`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const conv = chatsStore.find((c) => String(c.id) === String(chatId));
+        if (conv) conv.unreadCount = 0;
+        persistChats(chatsStore);
+        return data.unreadCount || 0;
       }
+    } catch (error) {
+      console.warn('markAsRead failed:', error);
     }
+
     const conv = chatsStore.find((c) => String(c.id) === String(chatId));
     if (conv) conv.unreadCount = 0;
     persistChats(chatsStore);
@@ -243,16 +253,15 @@ export const chatApi = {
 
   async markAllAsRead(userId = null) {
     const currentId = userId || getStoredUserId();
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const params = new URLSearchParams({ userId: currentId });
-        await fetch(`${API_BASE}/read-all?${params.toString()}`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-        });
-      } catch (error) {}
-    }
+    try {
+      const params = new URLSearchParams();
+      if (currentId && currentId !== 'u-me') params.set('userId', currentId);
+      await fetch(`${API_BASE}/read-all?${params.toString()}`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+    } catch (error) {}
+
     chatsStore.forEach((c) => (c.unreadCount = 0));
     persistChats(chatsStore);
     return 0;
@@ -260,23 +269,54 @@ export const chatApi = {
 
   async getUnreadCount(userId = null) {
     const currentId = userId || getStoredUserId();
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const params = new URLSearchParams({ userId: currentId });
-        const response = await fetch(`${API_BASE}/unread-count?${params.toString()}`, {
-          method: 'GET',
-          headers: getAuthHeaders(),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          return data.unreadCount || 0;
-        }
-      } catch (error) {}
-    }
+    try {
+      const params = new URLSearchParams();
+      if (currentId && currentId !== 'u-me') params.set('userId', currentId);
+      const response = await fetch(`${API_BASE}/unread-count?${params.toString()}`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data.unreadCount || 0;
+      }
+    } catch (error) {}
+
     return chatsStore.reduce((acc, c) => acc + (c.unreadCount || 0), 0);
   },
 
+  /**
+   * Delete conversation permanently from backend and local cache
+   */
+  async deleteConversation(chatId, userId = null) {
+    const currentId = userId || getStoredUserId();
+    try {
+      const params = new URLSearchParams();
+      if (currentId && currentId !== 'u-me') params.set('userId', currentId);
+
+      const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}?${params.toString()}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
+
+      if (response.ok) {
+        chatsStore = chatsStore.filter((c) => String(c.id) !== String(chatId));
+        persistChats(chatsStore);
+        return true;
+      }
+    } catch (err) {
+      console.warn('deleteConversation backend error:', err);
+    }
+
+    // Always remove from local store
+    chatsStore = chatsStore.filter((c) => String(c.id) !== String(chatId));
+    persistChats(chatsStore);
+    return true;
+  },
+
+  /**
+   * Start or get conversation with a seller (called from BookDetails, SellerProfile, etc.)
+   */
   async startOrGetChatWithSeller(book, seller, currentUserId = null) {
     const currentId = currentUserId || getStoredUserId();
     const currentUser = getStoredUser();
@@ -289,49 +329,53 @@ export const chatApi = {
       location: currentUser?.city || 'Local',
     };
 
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const payload = {
-          bookId: String(book.id),
-          bookTitle: book.title,
-          bookPrice: book.price,
-          bookImage: book.images?.[0] || '',
-          seller: {
-            id: String(seller.id),
-            name: seller.name || 'Book Seller',
-            avatar: seller.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80',
-            verified: Boolean(seller.verified),
-            location: seller.location || seller.city || 'Noida, UP',
-          },
-          buyer: buyerInfo,
-          currentUserId: currentId,
-          initialMessage: `Hi ${seller.name || 'there'}, is "${book.title}" still available?`,
-        };
+    const bookImage = Array.isArray(book.images) && book.images[0] ? book.images[0] : (book.image || '');
 
-        const response = await fetch(`${API_BASE}/start`, {
-          method: 'POST',
-          headers: getAuthHeaders(true),
-          body: JSON.stringify(payload),
-        });
-        if (response.ok) return await response.json();
-      } catch (error) {
-        console.warn('startOrGetChatWithSeller failed:', error);
+    const payload = {
+      bookId: String(book.id || ''),
+      bookTitle: book.title || 'Book Inquiry',
+      bookPrice: Number(book.price || 0),
+      bookImage: bookImage,
+      seller: {
+        id: String(seller.id || seller.sellerId || ''),
+        name: seller.name || 'Book Seller',
+        avatar: seller.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=80',
+        verified: Boolean(seller.verified),
+        location: seller.location || seller.city || 'Noida, UP',
+      },
+      buyer: buyerInfo,
+      currentUserId: currentId,
+      initialMessage: `Hi ${seller.name || 'there'}, is "${book.title || 'this book'}" still available?`,
+    };
+
+    try {
+      const response = await fetch(`${API_BASE}/start`, {
+        method: 'POST',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) {
+        const conv = await response.json();
+        updateOrAddLocalChat(conv);
+        return conv;
       }
+    } catch (error) {
+      console.warn('startOrGetChatWithSeller backend failed:', error);
     }
 
-    // Local fallback
+    // Fallback if backend is warming up
     const existing = chatsStore.find(
       (c) => String(c.bookId) === String(book.id) && c.otherUser && String(c.otherUser.id) === String(seller.id)
     );
     if (existing) return existing;
 
+    const newChatId = `c-${Date.now()}`;
     const newChat = {
-      id: `c-${Date.now()}`,
+      id: newChatId,
       bookId: String(book.id),
       bookTitle: book.title,
       bookPrice: book.price,
-      bookImage: book.images?.[0] || '',
+      bookImage: bookImage,
       currentUserId: currentId,
       currentUserName: buyerInfo.name,
       currentUserAvatar: buyerInfo.avatar,
@@ -343,16 +387,17 @@ export const chatApi = {
         verified: Boolean(seller.verified),
         location: seller.location || 'Noida, UP',
       },
-      lastMessage: `Hi, is "${book.title}" still available?`,
+      lastMessage: payload.initialMessage,
       lastMessageTime: 'Just now',
       unreadCount: 0,
       messages: [
         {
           id: `m-${Date.now()}`,
-          conversationId: `c-${Date.now()}`,
+          conversationId: newChatId,
           senderId: currentId,
-          text: `Hi, is "${book.title}" still available?`,
+          text: payload.initialMessage,
           time: 'Just now',
+          isRead: false,
         },
       ],
     };
@@ -361,6 +406,9 @@ export const chatApi = {
     return newChat;
   },
 
+  /**
+   * Send message via REST API and broadcast via WebSocket
+   */
   async sendMessage(chatId, text, senderId = null) {
     const actualSender = senderId || getStoredUserId();
     const payload = {
@@ -370,53 +418,36 @@ export const chatApi = {
       messageType: 'TEXT',
     };
 
-    // 1. Send via WebSocket if connected (DO NOT send REST simultaneously to prevent duplicate messages)
+    // Broadcast over WebSocket if connected
     if (stompClient && stompClient.connected) {
       try {
         stompClient.publish({
           destination: '/app/chat.sendMessage',
           body: JSON.stringify(payload),
         });
-
-        // Optimistic temporary message to render smoothly in UI
-        const tempMsg = {
-          id: `temp-${Date.now()}`,
-          conversationId: chatId,
-          senderId: actualSender,
-          text: text.trim(),
-          time: 'Just now',
-          messageType: 'TEXT',
-          isRead: false,
-          isOptimistic: true,
-        };
-        updateLocalConversation(chatId, tempMsg);
-        return tempMsg;
       } catch (e) {
-        console.warn('STOMP publish failed, falling back to REST:', e);
+        console.warn('STOMP publish error:', e);
       }
     }
 
-    // 2. Only if WebSocket is NOT connected, use the REST API
-    const alive = await this.isBackendAvailable();
-    if (alive) {
-      try {
-        const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages`, {
-          method: 'POST',
-          headers: getAuthHeaders(true),
-          body: JSON.stringify(payload),
-        });
-        if (response.ok) {
-          const savedMsg = await response.json();
-          updateLocalConversation(chatId, savedMsg);
-          return savedMsg;
-        }
-      } catch (err) {
-        console.warn('REST sendMessage failed:', err);
+    // Persist via REST API (authoritative source)
+    try {
+      const response = await fetch(`${API_BASE}/conversations/${encodeURIComponent(chatId)}/messages`, {
+        method: 'POST',
+        headers: getAuthHeaders(true),
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) {
+        const savedMsg = await response.json();
+        updateLocalConversation(chatId, savedMsg);
+        return savedMsg;
       }
+    } catch (err) {
+      console.warn('REST sendMessage error:', err);
     }
 
-    // 3. Fallback local message
-    const localMsg = {
+    // Temporary optimistic message with isRead: false
+    const fallbackMsg = {
       id: `m-${Date.now()}`,
       conversationId: chatId,
       senderId: actualSender,
@@ -425,11 +456,14 @@ export const chatApi = {
       messageType: 'TEXT',
       isRead: false,
     };
-    updateLocalConversation(chatId, localMsg);
-    return localMsg;
+    updateLocalConversation(chatId, fallbackMsg);
+    return fallbackMsg;
   },
 
-  connectWebSocket(chatId, { onMessage, onTyping, onStatusChange } = {}) {
+  /**
+   * Connect WebSocket STOMP broker for instant real-time message delivery
+   */
+  connectWebSocket(chatId, { onMessage, onTyping, onReadReceipt, onDeleted, onStatusChange } = {}) {
     if (typeof window === 'undefined') {
       return { disconnect: () => {}, sendTyping: () => {} };
     }
@@ -445,43 +479,51 @@ export const chatApi = {
     const client = new Client({
       webSocketFactory: () => new SockJS(WS_ENDPOINT),
       connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
-      reconnectDelay: 5000,
+      reconnectDelay: 4000,
       heartbeatIncoming: 10000,
       heartbeatOutgoing: 10000,
-      debug: (msg) => {
-        if (process.env.NODE_ENV === 'development') {
-          console.debug('[STOMP]', msg);
-        }
-      },
       onConnect: () => {
-        isBackendAlive = true;
         if (onStatusChange) onStatusChange('connected');
 
         if (chatId) {
-          // Subscribe to main conversation messages topic
+          // 1. Subscribe to conversation messages
           client.subscribe(`/topic/chat/${chatId}`, (frame) => {
             try {
               const msg = JSON.parse(frame.body);
+              if (msg.type === 'READ_RECEIPT' || msg.text === '__READ__') {
+                if (onReadReceipt) onReadReceipt(msg);
+                return;
+              }
               updateLocalConversation(chatId, msg);
               if (onMessage) onMessage(msg);
             } catch (err) {
-              console.error('Invalid message format:', err);
+              console.error('Invalid message frame:', err);
             }
           });
 
-          // Subscribe to typing notifications topic
+          // 2. Subscribe to read receipts (blue ticks)
+          client.subscribe(`/topic/chat/${chatId}/read`, (frame) => {
+            try {
+              const receipt = JSON.parse(frame.body);
+              if (onReadReceipt) onReadReceipt(receipt);
+            } catch (err) {}
+          });
+
+          // 3. Subscribe to typing indicator
           client.subscribe(`/topic/chat/${chatId}/typing`, (frame) => {
             try {
               const typingData = JSON.parse(frame.body);
               if (onTyping) onTyping(typingData);
-            } catch (err) {
-              console.error('Invalid typing payload:', err);
-            }
+            } catch (err) {}
+          });
+
+          // 4. Subscribe to conversation deletion
+          client.subscribe(`/topic/chat/${chatId}/deleted`, () => {
+            if (onDeleted) onDeleted(chatId);
           });
         }
       },
-      onStompError: (frame) => {
-        console.error('STOMP error:', frame);
+      onStompError: () => {
         if (onStatusChange) onStatusChange('error');
       },
       onWebSocketClose: () => {
@@ -517,9 +559,9 @@ export const chatApi = {
     };
   },
 
-  // -------------------------------------------------------
-  // GLOBAL NOTIFICATIONS WEBSOCKET LISTENER
-  // -------------------------------------------------------
+  /**
+   * Global notifications WebSocket for header unread badges
+   */
   connectGlobalNotifications({ onNotification } = {}) {
     if (typeof window === 'undefined') {
       return () => {};
@@ -544,9 +586,7 @@ export const chatApi = {
           try {
             const data = JSON.parse(frame.body);
             if (onNotification) onNotification(data);
-          } catch (e) {
-            console.error('Failed to parse global notification:', e);
-          }
+          } catch (e) {}
         });
       },
     });
@@ -563,27 +603,27 @@ export const chatApi = {
   },
 };
 
+function updateOrAddLocalChat(conv) {
+  if (!conv || !conv.id) return;
+  const index = chatsStore.findIndex((c) => String(c.id) === String(conv.id));
+  if (index >= 0) {
+    chatsStore[index] = { ...chatsStore[index], ...conv };
+  } else {
+    chatsStore.unshift(conv);
+  }
+  persistChats(chatsStore);
+}
+
 function updateLocalConversation(chatId, message) {
-  if (!message) return;
+  if (!message || message.text === '__READ__') return;
   const chat = chatsStore.find((c) => String(c.id) === String(chatId));
   if (!chat) return;
   if (!chat.messages) chat.messages = [];
-  
-  // If replacing an optimistic message
-  if (!message.isOptimistic) {
-    const optIndex = chat.messages.findIndex(
-      (m) => m.isOptimistic && m.text === message.text && String(m.senderId) === String(message.senderId)
-    );
-    if (optIndex !== -1) {
-      chat.messages[optIndex] = message;
-      chat.lastMessage = message.text;
-      chat.lastMessageTime = message.time || 'Just now';
-      persistChats(chatsStore);
-      return;
-    }
-  }
 
-  if (!chat.messages.some((m) => String(m.id) === String(message.id))) {
+  const existingIdx = chat.messages.findIndex((m) => String(m.id) === String(message.id));
+  if (existingIdx !== -1) {
+    chat.messages[existingIdx] = message;
+  } else {
     chat.messages.push(message);
   }
   chat.lastMessage = message.text;

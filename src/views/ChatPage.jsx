@@ -24,7 +24,8 @@ import {
   Wifi,
   WifiOff,
   Terminal,
-  CheckCircle2
+  CheckCircle2,
+  Trash2
 } from 'lucide-react';
 import { chatApi } from '../services/chatApi';
 import { useAuth } from '../context/AuthContext';
@@ -134,10 +135,22 @@ export function ChatPage() {
           } : c
         ));
       },
+      onReadReceipt: () => {
+        // WhatsApp blue tick update: All messages sent by current user are now marked as read
+        setMessages((prev) => prev.map(m => ({ ...m, isRead: true })));
+      },
+      onDeleted: (deletedChatId) => {
+        setConversations(prev => prev.filter(c => c.id !== deletedChatId));
+        if (activeChat?.id === deletedChatId) {
+          setActiveChat(null);
+          setMessages([]);
+          navigate('/chat');
+        }
+      },
       onTyping: (payload) => {
-        const myId = String(user?.id || localStorage.getItem('userId') || 'u-me');
+        const myId = String(user?.id || localStorage.getItem('userId') || '');
         const myEmail = user?.email || '';
-        if (payload?.userId !== myId && payload?.userId !== myEmail && payload?.conversationId === activeChat.id) {
+        if (payload?.userId && payload.userId !== myId && payload.userId !== myEmail && payload?.conversationId === activeChat.id) {
           setOtherUserTyping(Boolean(payload?.typing));
         }
       },
@@ -153,11 +166,57 @@ export function ChatPage() {
         handle.disconnect();
       }
     };
+  }, [activeChat?.id, navigate, user?.id, user?.email]);
+
+  // Production polling fallback (adaptive every 3.5s for Render sleep/reconnect resilience)
+  useEffect(() => {
+    if (!activeChat?.id) return;
+    const pollInterval = setInterval(async () => {
+      try {
+        const msgs = await chatApi.getMessages(activeChat.id);
+        if (Array.isArray(msgs)) {
+          setMessages(prev => {
+            const isDiff = msgs.length !== prev.length ||
+              msgs.some((m, idx) => prev[idx] && (prev[idx].isRead !== m.isRead || prev[idx].id !== m.id));
+            return isDiff ? msgs : prev;
+          });
+        }
+      } catch (err) {}
+    }, 3500);
+
+    return () => clearInterval(pollInterval);
   }, [activeChat?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, otherUserTyping]);
+
+  const handleDeleteConversation = async (convId, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!window.confirm('Are you sure you want to delete this chat conversation? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await chatApi.deleteConversation(convId);
+      setConversations(prev => prev.filter(c => c.id !== convId));
+      if (activeChat?.id === convId) {
+        const remaining = conversations.filter(c => c.id !== convId);
+        if (remaining.length > 0) {
+          handleSelectConversation(remaining[0]);
+        } else {
+          setActiveChat(null);
+          setMessages([]);
+          navigate('/chat');
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  };
 
   const handleSelectConversation = async (conv) => {
     setActiveChat(conv);
@@ -332,8 +391,15 @@ export function ChatPage() {
             {/* Conversation Items List */}
             <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
               {filteredConversations.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500">
-                  No conversations found
+                <div className="p-8 text-center text-xs text-slate-500 space-y-2">
+                  <p className="font-semibold text-slate-700">No conversations yet</p>
+                  <p className="text-[11px] text-slate-400">Click &quot;Chat with Seller&quot; on any book page to start a conversation.</p>
+                  <Link
+                    to="/books"
+                    className="inline-block mt-2 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
+                  >
+                    Browse Books
+                  </Link>
                 </div>
               ) : (
                 filteredConversations.map((conv) => {
@@ -347,7 +413,7 @@ export function ChatPage() {
                     <div
                       key={conv.id}
                       onClick={() => handleSelectConversation(conv)}
-                      className={`p-3.5 flex items-start gap-3 cursor-pointer transition-all ${
+                      className={`group p-3.5 flex items-start gap-3 cursor-pointer transition-all relative ${
                         isSelected 
                           ? 'bg-indigo-50/70 border-l-4 border-indigo-600' 
                           : hasUnread 
@@ -384,11 +450,22 @@ export function ChatPage() {
                         </p>
                       </div>
 
-                      {hasUnread && (
-                        <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0 shadow-2xs">
-                          {conv.unreadCount}
-                        </span>
-                      )}
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        {hasUnread && (
+                          <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center shadow-2xs">
+                            {conv.unreadCount}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          className="opacity-70 sm:opacity-0 sm:group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
+                          title="Delete chat"
+                          aria-label="Delete chat"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })
@@ -518,6 +595,17 @@ export function ChatPage() {
                     <span>Swap</span>
                   </button>
 
+                  {/* Delete Conversation Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteConversation(activeChat.id, e)}
+                    className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors border border-slate-200 shrink-0 cursor-pointer"
+                    title="Delete conversation"
+                    aria-label="Delete conversation"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+
                   {/* View Listing Link */}
                   {activeChat.bookId && (
                     <Link
@@ -592,11 +680,14 @@ export function ChatPage() {
                 </div>
 
                 {messages.map((msg) => {
-                  const currentUserId = String(user?.id || localStorage.getItem('userId') || 'u-me');
+                  const currentUserId = String(user?.id || localStorage.getItem('userId') || '');
                   const currentUserEmail = user?.email || '';
-                  const isMe = String(msg.senderId) === currentUserId ||
-                               (currentUserEmail && String(msg.senderId) === currentUserEmail) ||
-                               (currentUserId === 'u-me' && msg.senderId === 'u-me');
+                  const isMe = Boolean(
+                    (currentUserId && String(msg.senderId) === currentUserId) ||
+                    (currentUserEmail && String(msg.senderId) === currentUserEmail) ||
+                    (msg.senderName && user?.name && msg.senderName.toLowerCase() === user.name.toLowerCase()) ||
+                    msg.isOptimistic
+                  );
                   return (
                     <div
                       key={msg.id}
@@ -614,7 +705,13 @@ export function ChatPage() {
                       <div className="flex items-center gap-1 text-[10px] text-slate-400 mt-1 px-1">
                         <span>{msg.time}</span>
                         {isMe && (
-                          <CheckCheck className="w-3.5 h-3.5 text-indigo-500" title="Read" />
+                          msg.isOptimistic ? (
+                            <Check className="w-3.5 h-3.5 text-slate-400" title="Sending..." />
+                          ) : msg.isRead ? (
+                            <CheckCheck className="w-3.5 h-3.5 text-sky-400 font-bold" title="Read (Blue tick)" />
+                          ) : (
+                            <CheckCheck className="w-3.5 h-3.5 text-slate-400" title="Delivered (Unread)" />
+                          )
                         )}
                       </div>
                     </div>

@@ -19,11 +19,13 @@ import { BookGrid } from '../components/cards/BookGrid';
 import { SellerBadge } from '../components/common/SellerBadge';
 import { RateSellerModal } from '../components/modals/RateSellerModal';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 export function SellerProfilePage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const { user } = useAuth();
 
   const [seller, setSeller] = useState(null);
   const [books, setBooks] = useState([]);
@@ -60,11 +62,21 @@ export function SellerProfilePage() {
   };
 
   const handleChat = async () => {
+    if (!user) {
+      addToast('Please log in to chat with this seller', 'info');
+      navigate('/login');
+      return;
+    }
     try {
       const firstBook = books[0] || { id: 'b-general', title: 'Bookshelf Inquiry', price: 0 };
-      const chat = await chatApi.startOrGetChatWithSeller(firstBook, seller);
-      navigate(`/chat/${chat.id}`);
+      const chat = await chatApi.startOrGetChatWithSeller(firstBook, seller, user.id);
+      if (chat && chat.id) {
+        navigate(`/chat/${chat.id}`);
+      } else {
+        navigate('/chat');
+      }
     } catch (err) {
+      console.error('Failed to start chat:', err);
       navigate('/chat');
     }
   };

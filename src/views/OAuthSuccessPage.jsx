@@ -19,7 +19,7 @@ export default function OAuthSuccessPage() {
 
     loadUser()
       .then(() => {
-        navigate('/dashboard', { replace: true });
+        navigate('/profile', { replace: true });
       })
       .catch(() => {
         localStorage.removeItem('token');

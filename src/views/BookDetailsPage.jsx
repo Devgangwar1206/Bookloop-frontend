@@ -29,11 +29,13 @@ import { RequestExchangeModal } from '../components/modals/RequestExchangeModal'
 import { RateSellerModal } from '../components/modals/RateSellerModal';
 import { BookLocationMap } from '../components/common/BookLocationMap';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 export function BookDetailsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const { user } = useAuth();
 
   const [book, setBook] = useState(null);
   const [similarBooks, setSimilarBooks] = useState([]);
@@ -115,10 +117,20 @@ export function BookDetailsPage() {
   }
 
   const handleChat = async () => {
+    if (!user) {
+      addToast('Please log in to chat with the seller', 'info');
+      navigate('/login');
+      return;
+    }
     try {
-      const chat = await chatApi.startOrGetChatWithSeller(book, book.seller || {});
-      navigate(`/chat/${chat.id}`);
+      const chat = await chatApi.startOrGetChatWithSeller(book, book.seller || {}, user.id);
+      if (chat && chat.id) {
+        navigate(`/chat/${chat.id}`);
+      } else {
+        navigate('/chat');
+      }
     } catch (err) {
+      console.error('Failed to start chat:', err);
       navigate('/chat');
     }
   };
