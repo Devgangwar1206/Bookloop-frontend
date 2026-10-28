@@ -166,6 +166,9 @@ export function AiAssistantWidget() {
       }
 
       const data = await response.json();
+      if (data.debug) {
+        console.info('[Loopie AI Status]:', data.debug);
+      }
       const assistantMessage = {
         id: createMessageId('ai'),
         role: 'assistant',

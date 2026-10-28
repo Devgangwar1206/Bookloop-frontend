@@ -110,6 +110,49 @@ Here is how I can guide you today:
 What would you like to explore today?`;
 }
 
+// GET Diagnostic endpoint - open /api/assistant/chat in browser to test connection & API key
+export async function GET() {
+  const rawKey = process.env.GEMINI_API_KEY || '';
+  const apiKey = rawKey.replace(/["']/g, '').trim();
+  const hasKey = Boolean(apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.length > 10);
+
+  if (!hasKey) {
+    return NextResponse.json({
+      status: 'error',
+      message: 'GEMINI_API_KEY is missing or empty in environment variables.',
+      hasKey: false,
+      vercelEnv: process.env.VERCEL_ENV || 'local/unknown',
+      tip: 'Please add GEMINI_API_KEY in Vercel project settings for both Production and Preview environments, then Redeploy.'
+    });
+  }
+
+  // Live test call with Gemini 1.5 Flash
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-1.5-flash',
+      contents: [{ role: 'user', parts: [{ text: 'Hello, reply with "Loopie AI is working perfectly!"' }] }]
+    });
+
+    return NextResponse.json({
+      status: 'success',
+      message: 'Gemini API is connected and working!',
+      hasKey: true,
+      keyPrefix: apiKey.slice(0, 6) + '...',
+      testModel: 'gemini-1.5-flash',
+      geminiReply: response.text?.trim() || 'OK'
+    });
+  } catch (err: any) {
+    return NextResponse.json({
+      status: 'gemini_error',
+      message: 'GEMINI_API_KEY was found, but Google Gemini API returned an error.',
+      hasKey: true,
+      keyPrefix: apiKey.slice(0, 6) + '...',
+      errorDetails: err?.message || String(err)
+    });
+  }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { messages } = await req.json();
@@ -120,6 +163,8 @@ export async function POST(req: NextRequest) {
 
     const rawKey = process.env.GEMINI_API_KEY || '';
     const apiKey = rawKey.replace(/["']/g, '').trim();
+
+    let lastError: any = null;
 
     // If API key is available, call Gemini Flash models
     if (apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.length > 10) {
@@ -163,10 +208,9 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        // Try modern Gemini models in order of capability & speed
-        const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+        // Try stable, free-tier models in order: gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-pro
+        const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
         let reply = '';
-        let lastError: any = null;
 
         for (const modelName of candidateModels) {
           try {
@@ -198,6 +242,7 @@ export async function POST(req: NextRequest) {
           console.error('[Loopie AI] All candidate Gemini models failed:', lastError?.message || lastError);
         }
       } catch (geminiError: any) {
+        lastError = geminiError;
         console.error('[Loopie AI] Gemini initialization or request failed:', geminiError?.message || geminiError);
       }
     } else {
@@ -205,9 +250,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Intelligent domain-aware fallback response
-    const lastUserMsg = [...messages].reverse().find((m: { role: string; content: string }) => m.role === 'user');
+    const lastUserMsg = [...messages].reverse().find((m: { role?: string; content?: string }) => m?.role === 'user');
     const fallbackText = getSmartFallbackResponse(lastUserMsg?.content || '');
-    return NextResponse.json({ reply: fallbackText });
+    return NextResponse.json({
+      reply: fallbackText,
+      debug: {
+        hasKey: Boolean(apiKey && apiKey.length > 10),
+        keyPrefix: apiKey ? apiKey.slice(0, 6) + '...' : 'none',
+        error: lastError?.message || (!apiKey ? 'GEMINI_API_KEY missing in environment' : 'Gemini models failed')
+      }
+    });
 
   } catch (error: any) {
     console.error('AI Assistant route error:', error);
