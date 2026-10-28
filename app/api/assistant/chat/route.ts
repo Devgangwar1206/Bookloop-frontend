@@ -110,6 +110,40 @@ Here is how I can guide you today:
 What would you like to explore today?`;
 }
 
+// Direct REST fallback for Google Generative Language API
+async function callGeminiRest(apiKey: string, model: string, contents: any[], systemInstruction?: string) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const body: any = {
+    contents,
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 800,
+    }
+  };
+  if (systemInstruction) {
+    body.systemInstruction = {
+      parts: [{ text: systemInstruction }]
+    };
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`REST ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
 // GET Diagnostic endpoint - open /api/assistant/chat in browser to test connection & API key
 export async function GET() {
   const rawKey = process.env.GEMINI_API_KEY || '';
@@ -126,31 +160,40 @@ export async function GET() {
     });
   }
 
-  // Live test call with Gemini 1.5 Flash
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ role: 'user', parts: [{ text: 'Hello, reply with "Loopie AI is working perfectly!"' }] }]
-    });
+  // Live test call with verified models: gemini-3.5-flash, gemini-2.5-flash
+  const testModels = ['gemini-3.5-flash', 'gemini-2.5-flash'];
+  let testError: any = null;
 
-    return NextResponse.json({
-      status: 'success',
-      message: 'Gemini API is connected and working!',
-      hasKey: true,
-      keyPrefix: apiKey.slice(0, 6) + '...',
-      testModel: 'gemini-1.5-flash',
-      geminiReply: response.text?.trim() || 'OK'
-    });
-  } catch (err: any) {
-    return NextResponse.json({
-      status: 'gemini_error',
-      message: 'GEMINI_API_KEY was found, but Google Gemini API returned an error.',
-      hasKey: true,
-      keyPrefix: apiKey.slice(0, 6) + '...',
-      errorDetails: err?.message || String(err)
-    });
+  for (const model of testModels) {
+    try {
+      const reply = await callGeminiRest(
+        apiKey,
+        model,
+        [{ role: 'user', parts: [{ text: 'Hello, reply with "Loopie AI is working perfectly!"' }] }]
+      );
+
+      if (reply) {
+        return NextResponse.json({
+          status: 'success',
+          message: 'Gemini API is connected and working!',
+          hasKey: true,
+          keyPrefix: apiKey.slice(0, 6) + '...',
+          testModel: model,
+          geminiReply: reply.trim()
+        });
+      }
+    } catch (err: any) {
+      testError = err;
+    }
   }
+
+  return NextResponse.json({
+    status: 'gemini_error',
+    message: 'GEMINI_API_KEY was found, but Google Gemini API returned an error.',
+    hasKey: true,
+    keyPrefix: apiKey.slice(0, 6) + '...',
+    errorDetails: testError?.message || String(testError)
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -208,12 +251,13 @@ export async function POST(req: NextRequest) {
           });
         }
 
-        // Try stable, free-tier models in order: gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-pro
-        const candidateModels = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+        // Active models verified on this project's v1beta API: gemini-3.5-flash, gemini-2.5-flash
+        const candidateModels = ['gemini-3.5-flash', 'gemini-2.5-flash'];
         let reply = '';
 
         for (const modelName of candidateModels) {
           try {
+            // First try via SDK
             const response = await ai.models.generateContent({
               model: modelName,
               contents: geminiContents,
@@ -229,8 +273,18 @@ export async function POST(req: NextRequest) {
               break;
             }
           } catch (modelErr: any) {
-            lastError = modelErr;
-            console.warn(`[Loopie AI] Model ${modelName} failed, trying next candidate:`, modelErr?.message || modelErr);
+            console.warn(`[Loopie AI] SDK model ${modelName} failed, trying REST fallback:`, modelErr?.message || modelErr);
+            // Fallback to direct REST call
+            try {
+              const restReply = await callGeminiRest(apiKey, modelName, geminiContents, SYSTEM_INSTRUCTION);
+              if (restReply && restReply.trim().length > 0) {
+                reply = restReply.trim();
+                break;
+              }
+            } catch (restErr: any) {
+              lastError = restErr;
+              console.warn(`[Loopie AI] REST model ${modelName} also failed:`, restErr?.message || restErr);
+            }
           }
         }
 
