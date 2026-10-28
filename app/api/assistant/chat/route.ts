@@ -118,36 +118,90 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Messages array is required' }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const rawKey = process.env.GEMINI_API_KEY || '';
+    const apiKey = rawKey.replace(/["']/g, '').trim();
 
-    // If API key is available, call Gemini 3.8 Flash
-    if (apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.trim().length > 10) {
+    // If API key is available, call Gemini Flash models
+    if (apiKey && apiKey !== 'MY_GEMINI_API_KEY' && apiKey.length > 10) {
       try {
         const ai = new GoogleGenAI({ apiKey });
 
-        // Map messages to Gemini format
-        const contents = messages.map((m: { role: string; content: string }) => ({
-          role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
-          parts: [{ text: m.content }]
-        }));
+        // Filter and map messages to Gemini format
+        // Rule: Gemini requires the first message to have role 'user' and roles to alternate
+        const validMessages = (messages || []).filter(
+          (m: { role?: string; content?: string }) => m && typeof m.content === 'string' && m.content.trim().length > 0
+        );
 
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents,
-          config: {
-            systemInstruction: SYSTEM_INSTRUCTION,
-            temperature: 0.7,
-            maxOutputTokens: 800,
+        let geminiContents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+        for (const m of validMessages) {
+          const role: 'user' | 'model' = (m.role === 'assistant' || m.role === 'model') ? 'model' : 'user';
+
+          // Skip any leading model/assistant message (Gemini requires starting with 'user')
+          if (geminiContents.length === 0 && role === 'model') {
+            continue;
           }
-        });
 
-        const reply = response.text || '';
-        if (reply.trim().length > 0) {
+          // Merge consecutive messages of the same role
+          const lastTurn = geminiContents[geminiContents.length - 1];
+          if (lastTurn && lastTurn.role === role) {
+            lastTurn.parts[0].text += `\n\n${m.content.trim()}`;
+          } else {
+            geminiContents.push({
+              role,
+              parts: [{ text: m.content.trim() }]
+            });
+          }
+        }
+
+        // Ensure there is at least one user message
+        if (geminiContents.length === 0) {
+          const lastUserMsg = [...(messages || [])].reverse().find((m: { role?: string; content?: string }) => m?.role === 'user');
+          geminiContents.push({
+            role: 'user',
+            parts: [{ text: lastUserMsg?.content?.trim() || 'Hello Loopie!' }]
+          });
+        }
+
+        // Try modern Gemini models in order of capability & speed
+        const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+        let reply = '';
+        let lastError: any = null;
+
+        for (const modelName of candidateModels) {
+          try {
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: geminiContents,
+              config: {
+                systemInstruction: SYSTEM_INSTRUCTION,
+                temperature: 0.7,
+                maxOutputTokens: 800,
+              }
+            });
+
+            if (response.text && response.text.trim().length > 0) {
+              reply = response.text.trim();
+              break;
+            }
+          } catch (modelErr: any) {
+            lastError = modelErr;
+            console.warn(`[Loopie AI] Model ${modelName} failed, trying next candidate:`, modelErr?.message || modelErr);
+          }
+        }
+
+        if (reply.length > 0) {
           return NextResponse.json({ reply });
         }
-      } catch (geminiError) {
-        console.warn('Gemini API call failed, using intelligent assistant fallback:', geminiError);
+
+        if (lastError) {
+          console.error('[Loopie AI] All candidate Gemini models failed:', lastError?.message || lastError);
+        }
+      } catch (geminiError: any) {
+        console.error('[Loopie AI] Gemini initialization or request failed:', geminiError?.message || geminiError);
       }
+    } else {
+      console.warn('[Loopie AI] No valid GEMINI_API_KEY found in environment variables. Falling back to static responses.');
     }
 
     // Intelligent domain-aware fallback response

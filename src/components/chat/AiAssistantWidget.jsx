@@ -139,7 +139,7 @@ export function AiAssistantWidget() {
 
   const handleSendMessage = async (textToSend) => {
     const text = (textToSend || input).trim();
-    if (!text || loading) return;
+    if (!text || loading) return;                   //Empty message rokna
 
     const userMessage = {
       id: createMessageId('user'),
@@ -171,20 +171,23 @@ export function AiAssistantWidget() {
         role: 'assistant',
         content: data.reply || "I'm right here to help you! Feel free to ask about book recommendations, selling tips, or safe escrow orders."
       };
+
       setMessages(prev => [...prev, assistantMessage]);
+
     } catch (err) {
       console.warn('AI Assistant error, providing fallback:', err);
+
       const fallbackMessage = {
         id: createMessageId('ai-err'),
         role: 'assistant',
         content: `I'm right here to help you! 👧🌸 On BookLoop you can:
-• **Buy Books:** Explore our [Marketplace](/books) with 100% Escrow Protection.
-• **Sell Books:** List any book in 2 minutes at [Sell a Book](/sell).
-• **Track Orders:** Check delivery and meetup status at [My Orders](/dashboard/orders).
-• **Book Swaps:** Trade books with fellow readers at [Exchanges](/dashboard/exchanges).
+                • **Buy Books:** Explore our [Marketplace](/books) with 100% Escrow Protection.
+                • **Sell Books:** List any book in 2 minutes at [Sell a Book](/sell).
+                • **Track Orders:** Check delivery and meetup status at [My Orders](/dashboard/orders).
+                • **Book Swaps:** Trade books with fellow readers at [Exchanges](/dashboard/exchanges).
 
-What specific book recommendation or seller question can I answer for you?`
-      };
+                What specific book recommendation or seller question can I answer for you?`
+                      };
       setMessages(prev => [...prev, fallbackMessage]);
     } finally {
       setLoading(false);
@@ -341,15 +344,15 @@ What specific book recommendation or seller question can I answer for you?`
                 <div className="flex items-center gap-1.5">
                   <h3 className="font-serif font-bold text-sm text-white truncate flex items-center gap-1">
                     <span>Loopie AI</span>
-                    <span className="text-xs">🤖✨</span>
+                    <span className="text-xs">✨</span>
                   </h3>
-                  <span className="text-[10px] font-bold bg-white/20 text-white border border-white/30 px-1.5 py-0.2 rounded-full flex items-center gap-1">
+                  {/* <span className="text-[10px] font-bold bg-white/20 text-white border border-white/30 px-1.5 py-0.2 rounded-full flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse" />
                     Online Guide
-                  </span>
+                  </span> */}
                 </div>
                 <div className="text-[11px] text-amber-100 font-medium truncate">
-                  Personal Guide for Readers & Sellers 📚
+                  Personal Guide for Readers & Sellers 
                 </div>
               </div>
             </div>
